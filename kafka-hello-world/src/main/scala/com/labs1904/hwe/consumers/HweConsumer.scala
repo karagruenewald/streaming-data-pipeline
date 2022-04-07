@@ -11,6 +11,9 @@ import org.apache.kafka.common.serialization.StringDeserializer
 import java.time.Duration
 import java.util.{Arrays, Properties, UUID}
 
+case class RawUser(id: Int, name: String, email: String)
+case class EnrichedUser(id: Int, name: String, email: String, numberAsWord: String, hweDeveloper: String)
+
 object HweConsumer {
   val BootstrapServer : String = "CHANGEME"
   val consumerTopic: String = "question-1"
@@ -18,9 +21,9 @@ object HweConsumer {
   val username: String = "CHANGEME"
   val password: String = "CHANGEME"
   //Use this for Windows
-  val trustStore: String = "src\\main\\resources\\kafka.client.truststore.jks"
+  //val trustStore: String = "src\\main\\resources\\kafka.client.truststore.jks"
   //Use this for Mac
-  //val trustStore: String = "src/main/resources/kafka.client.truststore.jks"
+  val trustStore: String = "src/main/resources/kafka.client.truststore.jks"
 
   implicit val formats: DefaultFormats.type = DefaultFormats
 
@@ -49,6 +52,22 @@ object HweConsumer {
         val message = record.value()
         println(s"Message Received: $message")
         // TODO: Add business logic here!
+        val splitData = message.split(",")
+        val id = splitData(0).toInt
+        val name = splitData(1)
+        val email = splitData(2)
+
+        val user = RawUser(id, name, email)
+
+        val hweDeveloper = "Kara Gruenewald"
+        val enrichedUser = EnrichedUser(user.id, user.name, user.email, Util.numberToWordMap(user.id), hweDeveloper)
+        print(enrichedUser)
+
+        val messageToSend = s"${enrichedUser.id},${enrichedUser.name},${enrichedUser.email},${enrichedUser.numberAsWord},${enrichedUser.hweDeveloper}"
+        println(messageToSend)
+
+        val producerRecord = new ProducerRecord[String, String](HweConsumer.producerTopic, messageToSend)
+        producer.send(producerRecord)
 
       })
     }
