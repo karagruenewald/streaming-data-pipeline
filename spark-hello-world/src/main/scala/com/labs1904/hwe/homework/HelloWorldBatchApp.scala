@@ -11,12 +11,15 @@ object HelloWorldBatchApp {
     try {
       logger.info(s"$jobName starting...")
       //TODO: What is a spark session - Why do we need this line?
+      //unified entry point of a spark application
       val spark = SparkSession.builder()
         .appName(jobName)
         .config("spark.sql.shuffle.partitions", "3")
         //TODO- What is local[*] doing here?
+        //used to run spark locally on our machine
         .master("local[*]")
         //TODO- What does Get or Create do?
+        //gets an existing spark session or creates one if there isn't one based on the options that are set
         .getOrCreate()
 
       import spark.implicits._
