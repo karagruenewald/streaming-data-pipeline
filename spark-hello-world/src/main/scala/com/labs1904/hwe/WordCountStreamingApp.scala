@@ -1,13 +1,14 @@
 package com.labs1904.hwe
 
-import org.apache.kafka.clients.producer.ProducerConfig
-import org.apache.kafka.common.serialization.StringSerializer
+import org.apache.kafka.clients.consumer.{ConsumerConfig, KafkaConsumer}
+import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
 import org.apache.log4j.Logger
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.{OutputMode, Trigger}
 import org.apache.spark.sql.SparkSession
 
-import java.util.Properties
+import java.util
+import java.util.{Properties, UUID}
 
 /**
  * Spark Structured Streaming app
@@ -16,10 +17,11 @@ object WordCountStreamingApp {
   lazy val logger: Logger = Logger.getLogger(this.getClass)
   val jobName = "WordCountStreamingApp"
   // TODO: define the schema for parsing data from Kafka
-
-  val bootstrapServer : String = "CHANGEME"
-  val username: String = "CHANGEME"
-  val password: String = "CHANGEME"
+  // doesn't work
+  // val schema = new StructType().add("word", StringType, nullable = true)
+  val bootstrapServer : String = "changeme"
+  val username: String = "changeme"
+  val password: String = "changeme"
   val Topic: String = "word-count"
 
   //Use this for Windows
@@ -29,6 +31,11 @@ object WordCountStreamingApp {
 
   def main(args: Array[String]): Unit = {
     logger.info(s"$jobName starting...")
+
+    val consumerProperties = getProperties(bootstrapServer)
+    val consumer: KafkaConsumer[String, String] = new KafkaConsumer[String, String](consumerProperties)
+    consumer.subscribe(util.Arrays.asList(Topic))
+
 
     try {
       val spark = SparkSession.builder()
@@ -58,11 +65,13 @@ object WordCountStreamingApp {
 
       sentences.printSchema
 
-      // TODO: implement me
-      //val counts = ???
 
-      val query = sentences.writeStream
-        .outputMode(OutputMode.Append())
+      // TODO: implement me
+      val words = sentences.flatMap(x => WordCountBatchApp.splitSentenceIntoWords(x))
+      val counts = words.groupBy("value").count().sort(desc("count")).limit(10)
+
+      val query = counts.writeStream
+        .outputMode(OutputMode.Complete())
         .format("console")
         .trigger(Trigger.ProcessingTime("5 seconds"))
         .start()
@@ -73,10 +82,27 @@ object WordCountStreamingApp {
     }
   }
 
-  def getScramAuthString(username: String, password: String) = {
+  def getScramAuthString(username: String, password: String): String = {
     s"""org.apache.kafka.common.security.scram.ScramLoginModule required
    username=\"$username\"
    password=\"$password\";"""
+  }
+
+  def getProperties(bootstrapServer: String): Properties = {
+    // Set Properties to be used for Kafka Consumer
+    val properties = new Properties
+    properties.setProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServer)
+    properties.setProperty(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, classOf[StringDeserializer].getName)
+    properties.setProperty(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, classOf[StringDeserializer].getName)
+    properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString)
+    properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
+
+    properties.put("security.protocol", "SASL_SSL")
+    properties.put("sasl.mechanism", "SCRAM-SHA-512")
+    properties.put("ssl.truststore.location", trustStore)
+    properties.put("sasl.jaas.config", getScramAuthString(username, password))
+
+    properties
   }
 
 }
