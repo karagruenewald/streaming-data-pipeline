@@ -1,30 +1,54 @@
 package com.labs1904.spark
 
+
+import org.apache.hadoop.hbase.{HBaseConfiguration, TableName}
+import org.apache.hadoop.hbase.client.{ConnectionFactory, Get, Scan}
+import org.apache.hadoop.hbase.util.Bytes
+import org.apache.kafka.clients.consumer.{ConsumerConfig, KafkaConsumer}
+import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.log4j.Logger
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.streaming.{OutputMode, Trigger}
+
+import java.util
+import java.util.{Properties, UUID}
 
 
 /**
  * Spark Structured Streaming app
  *
  */
+
+case class Review(marketplace: String, customer_id: String,	review_id: String,	product_id: String,	product_parent: String,	product_title: String,
+                  product_category: String,	star_rating: String,	helpful_votes: String,	total_votes: String,	vine: String,	verified_purchase: String,
+                  review_headline: String,	review_body: String, review_date: String)
+case class EnrichedReview(birthdate: String, mail: String, name: String, sex: String, username: String, marketplace: String, customer_id: String,
+                  review_id: String,	product_id: String,	product_parent: String,	product_title: String,
+                  product_category: String,	star_rating: String,	helpful_votes: String,	total_votes: String,	vine: String,	verified_purchase: String,
+                  review_headline: String,	review_body: String, review_date: String)
+
 object StreamingPipeline {
   lazy val logger: Logger = Logger.getLogger(this.getClass)
   val jobName = "StreamingPipeline"
 
-  val hdfsUrl = "CHANGEME"
-  val bootstrapServers = "CHANGEME"
-  val username = "CHANGEME"
-  val password = "CHANGEME"
-  val hdfsUsername = "CHANGEME" // TODO: set this to your handle
+  val hdfsUrl = "changeme"
+  val bootstrapServers = "changeme"
+  val username = "changeme"
+  val password = "changeme"
+  val hdfsUsername = "kgruenewald" // TODO: set this to your handle
+  val Topic = "reviews"
 
   //Use this for Windows
-  val trustStore: String = "src\\main\\resources\\kafka.client.truststore.jks"
+  //val trustStore: String = "src\\main\\resources\\kafka.client.truststore.jks"
   //Use this for Mac
-  //val trustStore: String = "src/main/resources/kafka.client.truststore.jks"
+  val trustStore: String = "src/main/resources/kafka.client.truststore.jks"
 
   def main(args: Array[String]): Unit = {
+
+    val consumerProperties = getProperties(bootstrapServers)
+    val consumer = new KafkaConsumer[String, String](consumerProperties)
+    consumer.subscribe(util.Arrays.asList(Topic))
+
     try {
       val spark = SparkSession.builder()
         .config("spark.sql.shuffle.partitions", "3")
@@ -50,10 +74,47 @@ object StreamingPipeline {
         .selectExpr("CAST(value AS STRING)").as[String]
 
       // TODO: implement logic here
-      val result = ds
+      val rawData = ds.map(fullString => {
+        val columns = splitData(fullString)
+        val review = Review(columns(0), columns(1), columns(2), columns(3),
+          columns(4), columns(5), columns(6), columns(7), columns(8),
+          columns(9), columns(10), columns(11), columns(12), columns(13),
+          columns(14))
+        review
+      })
+//      val conf = HBaseConfiguration.create()
+//      conf.set("hbase.zookeeper.quorum", "hbase02.hourswith.expert:2181")
+//      val connection = ConnectionFactory.createConnection(conf)
+//      val table = connection.getTable(TableName.valueOf("kgruenewald:users"))
+//      val scan = new Scan()
+//      val scanner = table.getScanner(scan)
+//      val test = scanner.iterator().asScala
+//      println(scanner.next())
+      val enrichData = rawData.mapPartitions(partition => {
+        val conf = HBaseConfiguration.create()
+        conf.set("changeme", "changeme")
+        val connection = ConnectionFactory.createConnection(conf)
+        val table = connection.getTable(TableName.valueOf("kgruenewald:users"))
+
+        val iter = partition.map(review => {
+          val get = new Get(Bytes.toBytes(review.customer_id))
+          val result = table.get(get)
+          val enrichedReview = EnrichedReview(Bytes.toString(result.getValue(Bytes.toBytes("f1"), Bytes.toBytes("birthdate"))),
+            Bytes.toString(result.getValue(Bytes.toBytes("f1"), Bytes.toBytes("mail"))), Bytes.toString(result.getValue(Bytes.toBytes("f1"), Bytes.toBytes("name"))),
+            Bytes.toString(result.getValue(Bytes.toBytes("f1"), Bytes.toBytes("sex"))), Bytes.toString(result.getValue(Bytes.toBytes("f1"), Bytes.toBytes("username"))),
+            review.marketplace, review.customer_id, review.review_id, review.product_id, review.product_parent, review.product_title,
+            review.product_category, review.star_rating, review.helpful_votes, review.total_votes, review.vine, review.verified_purchase,
+            review.review_headline, review.review_body, review.review_date)
+          enrichedReview
+        }).toList.iterator
+
+        connection.close()
+
+        iter
+      })
 
       // Write output to console
-      val query = result.writeStream
+      val query = enrichData.writeStream
         .outputMode(OutputMode.Append())
         .format("console")
         .option("truncate", false)
@@ -79,4 +140,28 @@ object StreamingPipeline {
    username=\"$username\"
    password=\"$password\";"""
   }
+
+  def getProperties(bootstrapServer: String): Properties = {
+    // Set Properties to be used for Kafka Consumer
+    val properties = new Properties
+    properties.setProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServer)
+    properties.setProperty(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, classOf[StringDeserializer].getName)
+    properties.setProperty(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, classOf[StringDeserializer].getName)
+    properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString)
+    properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
+
+    properties.put("security.protocol", "SASL_SSL")
+    properties.put("sasl.mechanism", "SCRAM-SHA-512")
+    properties.put("ssl.truststore.location", trustStore)
+    properties.put("sasl.jaas.config", getScramAuthString(username, password))
+
+    properties
+  }
+
+  def splitData(dataSet: String): Array[String]= {
+    val split = dataSet.split("\t")
+    split
+  }
+
 }
+
